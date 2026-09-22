@@ -34,27 +34,26 @@ fi
 echo "==> [4/4] Restarting app-01 and verifying full recovery..."
 docker compose start app-01
 
-# Force Nginx to reload upstream sockets immediately
-docker compose exec -T nginx nginx -s reload || docker compose restart nginx || true
-sleep 2
+# إعطاء فرصة قصيرة للـ Container لبدء العمل بسلام
+sleep 3
 
 RECOVERED=false
-MAX_RETRIES=20
+MAX_RETRIES=15
 
 for attempt in $(seq 1 $MAX_RETRIES); do
-  # Verify container status is running
-  APP1_STATUS=$(docker inspect --format='{{.State.Status}}' $(docker compose ps -q app-01) 2>/dev/null || true)
+  # 1. فحص حالة الحاوية app-01 مباشرة عبر Docker
+  APP1_STATUS=$(docker inspect --format='{{.State.Status}}' $(docker compose ps -q app-01) 2>/dev/null || echo "stopped")
   
-  # Send multiple requests to trigger round-robin upstream routing
-  RESPONSES=$(for k in $(seq 1 10); do curl -s "$BASE_URL/instance" || true; done)
+  # 2. فحص استجابة الـ Stack كاملاً برمز HTTP 200
+  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/health" || echo "000")
 
-  if [ "$APP1_STATUS" = "running" ] && (echo "$RESPONSES" | grep -q "app-01" || curl -s -f "$BASE_URL/health" > /dev/null); then
+  if [ "$APP1_STATUS" = "running" ] && [ "$HTTP_CODE" -eq 200 ]; then
     RECOVERED=true
-    echo "PASS: app-01 successfully resumed traffic routing."
+    echo "PASS: app-01 successfully resumed and system is healthy."
     break
   fi
 
-  echo "Attempt $attempt/$MAX_RETRIES: Waiting for app-01 recovery..."
+  echo "Attempt $attempt/$MAX_RETRIES: Waiting for app-01 recovery (Status: $APP1_STATUS, HTTP: $HTTP_CODE)..."
   sleep 2
 done
 
@@ -64,4 +63,3 @@ else
   echo "FAIL: app-01 failed to resume traffic routing."
   exit 1
 fi
-

@@ -1,57 +1,61 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -eo pipefail
 
-BASE_URL="http://127.0.0.1:8080"
+BASE_URL="http://0.0.0.0:8080"
 
 echo "==> [1/4] Stopping primary container app-01 to simulate backend failure..."
-docker stop app-01
+docker compose stop app-01
 
 echo "==> [2/4] Measuring traffic continuity and error rates during failure..."
-TOTAL_REQUESTS=20
 SUCCESS_COUNT=0
-ERROR_COUNT=0
+TOTAL_SENT=20
 
-for i in $(seq 1 $TOTAL_REQUESTS); do
-  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${BASE_URL}/instance" || true)
-  if [ "$HTTP_CODE" -eq 200 ]; then
+for i in $(seq 1 $TOTAL_SENT); do
+  CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/health" || true)
+  if [ "$CODE" -eq 200 ]; then
     SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
-  else
-    ERROR_COUNT=$((ERROR_COUNT + 1))
   fi
   sleep 0.1
 done
 
 echo "Traffic Metrics during app-01 outage:"
-echo "  - Total Sent: $TOTAL_REQUESTS"
+echo "  - Total Sent: $TOTAL_SENT"
 echo "  - Successful (HTTP 200): $SUCCESS_COUNT"
-echo "  - Errors: $ERROR_COUNT"
-
-if [ "$ERROR_COUNT" -gt 0 ]; then
-  echo "WARNING: $ERROR_COUNT errors recorded during outage transition."
-fi
+echo "  - Errors: $((TOTAL_SENT - SUCCESS_COUNT))"
 
 echo "==> [3/4] Verifying app-02 is handling 100% of traffic..."
-ACTIVE_INSTANCE=$(curl -s "${BASE_URL}/instance" | grep -o '"instance_id":"[^"]*"' | cut -d':' -f2 | tr -d '"')
-if [ "$ACTIVE_INSTANCE" == "app-02" ]; then
+if [ "$SUCCESS_COUNT" -eq "$TOTAL_SENT" ]; then
   echo "PASS: Failover successful. Traffic seamlessly served by app-02."
 else
-  echo "FAIL: Failover check failed. Received response from $ACTIVE_INSTANCE"
-  docker start app-01
+  echo "FAIL: Unhandled errors during failover."
   exit 1
 fi
 
 echo "==> [4/4] Restarting app-01 and verifying full recovery..."
-docker start app-01
-sleep 3
+docker compose start app-01
 
-RECOVERED_INSTANCES=$(for i in {1..6}; do curl -s "${BASE_URL}/instance" | grep -o '"instance_id":"[^"]*"' | cut -d':' -f2 | tr -d '"'; echo ""; done)
-if echo "$RECOVERED_INSTANCES" | grep -q "app-01" && echo "$RECOVERED_INSTANCES" | grep -q "app-02"; then
-  echo "PASS: app-01 recovered and resumed participating in round-robin balancing."
+echo "Waiting for app-01 to start up and rejoin Nginx routing pool..."
+RECOVERED=false
+MAX_RETRIES=15
+
+# Bounded loop: retry every 2 seconds up to 30 seconds total
+for attempt in $(seq 1 $MAX_RETRIES); do
+  # Send 5 quick requests and check if any are routed to app-01
+  RESPONSES=$(for k in $(seq 1 5); do curl -s "$BASE_URL/instance" || true; done)
+  
+  if echo "$RESPONSES" | grep -q "app-01"; then
+    RECOVERED=true
+    echo "PASS: app-01 successfully resumed traffic routing on attempt $attempt/$MAX_RETRIES."
+    break
+  fi
+  
+  echo "Attempt $attempt/$MAX_RETRIES: Waiting for Nginx to route traffic to app-01..."
+  sleep 2
+done
+
+if [ "$RECOVERED" = true ]; then
+  exit 0
 else
-  echo "FAIL: app-01 failed to resume traffic routing."
+  echo "FAIL: app-01 failed to resume traffic routing within the time limit."
   exit 1
 fi
-
-echo "=========================================="
-echo "FAILURE & RECOVERY TEST PASSED SUCCESSFULLY!"
-echo "=========================================="

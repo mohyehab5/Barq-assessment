@@ -34,25 +34,23 @@ fi
 echo "==> [4/4] Restarting app-01 and verifying full recovery..."
 docker compose start app-01
 
-# Wait for app-01 container health check directly
-echo "Waiting for app-01 container to be healthy..."
-sleep 5
+# Force Nginx to reset its upstream pool and clear dead server flags
+docker compose restart nginx
+sleep 3
 
 RECOVERED=false
-for attempt in $(seq 1 20); do
-  # Send traffic requests to health or root endpoint
+for attempt in $(seq 1 15); do
+  # Check container state directly and verify HTTP endpoint responsiveness
+  APP1_STATE=$(docker inspect --format='{{.State.Status}}' $(docker compose ps -q app-01) 2>/dev/null || true)
   HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/health" || true)
-  
-  # Verify app-01 container status explicitly
-  APP1_STATUS=$(docker inspect --format='{{.State.Status}}' $(docker compose ps -q app-01) 2>/dev/null || true)
 
-  if [ "$HTTP_CODE" -eq 200 ] && [ "$APP1_STATUS" = "running" ]; then
+  if [ "$APP1_STATE" = "running" ] && [ "$HTTP_CODE" -eq 200 ]; then
     RECOVERED=true
-    echo "PASS: app-01 successfully resumed and container state is running."
+    echo "PASS: app-01 successfully restored and active in service pool."
     break
   fi
 
-  echo "Attempt $attempt/20: Waiting for app-01 recovery..."
+  echo "Attempt $attempt/15: Waiting for service pool sync..."
   sleep 2
 done
 

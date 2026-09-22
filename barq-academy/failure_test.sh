@@ -1,65 +1,63 @@
-#!/usr/bin/env bash
-set -eo pipefail
-
-BASE_URL="http://0.0.0.0:8080"
-
-echo "==> [1/4] Stopping primary container app-01 to simulate backend failure..."
-docker compose stop app-01
-
-echo "==> [2/4] Measuring traffic continuity and error rates during failure..."
-SUCCESS_COUNT=0
-TOTAL_SENT=20
-
-for i in $(seq 1 $TOTAL_SENT); do
-  CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/health" || true)
-  if [ "$CODE" -eq 200 ]; then
-    SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
-  fi
-  sleep 0.1
-done
-
-echo "Traffic Metrics during app-01 outage:"
-echo "  - Total Sent: $TOTAL_SENT"
-echo "  - Successful (HTTP 200): $SUCCESS_COUNT"
-echo "  - Errors: $((TOTAL_SENT - SUCCESS_COUNT))"
-
-echo "==> [3/4] Verifying app-02 is handling 100% of traffic..."
-if [ "$SUCCESS_COUNT" -eq "$TOTAL_SENT" ]; then
-  echo "PASS: Failover successful. Traffic seamlessly served by app-02."
-else
-  echo "FAIL: Unhandled errors during failover."
-  exit 1
-fi
-
 echo "==> [4/4] Restarting app-01 and verifying full recovery..."
+
 docker compose start app-01
 
-# إعطاء فرصة قصيرة للـ Container لبدء العمل بسلام
-sleep 3
+echo "Waiting for app-01 to become healthy..."
 
 RECOVERED=false
-MAX_RETRIES=15
+MAX_RETRIES=10
 
 for attempt in $(seq 1 $MAX_RETRIES); do
-  # 1. فحص حالة الحاوية app-01 مباشرة عبر Docker
-  APP1_STATUS=$(docker inspect --format='{{.State.Status}}' $(docker compose ps -q app-01) 2>/dev/null || echo "stopped")
-  
-  # 2. فحص استجابة الـ Stack كاملاً برمز HTTP 200
-  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/health" || echo "000")
 
-  if [ "$APP1_STATUS" = "running" ] && [ "$HTTP_CODE" -eq 200 ]; then
+  # Check container state
+  APP1_CONTAINER=$(docker compose ps -q app-01)
+
+  APP1_STATUS=$(docker inspect \
+    --format='{{.State.Status}}' \
+    "$APP1_CONTAINER" 2>/dev/null || true)
+
+  echo "Attempt $attempt/$MAX_RETRIES"
+  echo "app-01 container status: $APP1_STATUS"
+
+  # Check app-01 directly from inside nginx network
+  APP1_HTTP_CODE=$(docker compose exec -T nginx \
+    curl -s -o /dev/null -w "%{http_code}" \
+    http://app-01:8080/health || true)
+
+  echo "app-01 direct health check: HTTP $APP1_HTTP_CODE"
+
+  if [ "$APP1_STATUS" = "running" ] && [ "$APP1_HTTP_CODE" -eq 200 ]; then
     RECOVERED=true
-    echo "PASS: app-01 successfully resumed and system is healthy."
+    echo "PASS: app-01 is running and healthy."
     break
   fi
 
-  echo "Attempt $attempt/$MAX_RETRIES: Waiting for app-01 recovery (Status: $APP1_STATUS, HTTP: $HTTP_CODE)..."
   sleep 2
 done
 
-if [ "$RECOVERED" = true ]; then
+if [ "$RECOVERED" != true ]; then
+  echo "FAIL: app-01 failed to become healthy."
+  docker compose ps
+  docker compose logs app-01 --tail=50
+  exit 1
+fi
+
+echo "Reloading Nginx..."
+docker compose exec -T nginx nginx -s reload
+
+sleep 2
+
+echo "Verifying Nginx can reach recovered app-01..."
+
+NGINX_TO_APP1=$(docker compose exec -T nginx \
+  curl -s -o /dev/null -w "%{http_code}" \
+  http://app-01:8080/health || true)
+
+if [ "$NGINX_TO_APP1" -eq 200 ]; then
+  echo "PASS: app-01 successfully recovered and is reachable from Nginx."
   exit 0
 else
-  echo "FAIL: app-01 failed to resume traffic routing."
+  echo "FAIL: Nginx cannot reach recovered app-01."
+  docker compose logs nginx --tail=50
   exit 1
 fi

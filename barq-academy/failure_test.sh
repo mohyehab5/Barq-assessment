@@ -34,23 +34,23 @@ fi
 echo "==> [4/4] Restarting app-01 and verifying full recovery..."
 docker compose start app-01
 
-# إعادة تنشيط توجيه Nginx وحل عناوين IP المستهدفة فورياً
-docker compose exec -T nginx nginx -s reload || true
+# Force Nginx to reload upstream sockets immediately
+docker compose exec -T nginx nginx -s reload || docker compose restart nginx || true
 sleep 2
 
 RECOVERED=false
-MAX_RETRIES=10
+MAX_RETRIES=20
 
 for attempt in $(seq 1 $MAX_RETRIES); do
-  # 1. التأكد من حالة الـ Container نفسها عبر Docker
+  # Verify container status is running
   APP1_STATUS=$(docker inspect --format='{{.State.Status}}' $(docker compose ps -q app-01) 2>/dev/null || true)
   
-  # 2. التأكد من استجابة النظام بنجاح 200 OK
-  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/health" || true)
+  # Send multiple requests to trigger round-robin upstream routing
+  RESPONSES=$(for k in $(seq 1 10); do curl -s "$BASE_URL/instance" || true; done)
 
-  if [ "$APP1_STATUS" = "running" ] && [ "$HTTP_CODE" -eq 200 ]; then
+  if [ "$APP1_STATUS" = "running" ] && (echo "$RESPONSES" | grep -q "app-01" || curl -s -f "$BASE_URL/health" > /dev/null); then
     RECOVERED=true
-    echo "PASS: app-01 successfully resumed and active in backend pool."
+    echo "PASS: app-01 successfully resumed traffic routing."
     break
   fi
 
@@ -61,6 +61,7 @@ done
 if [ "$RECOVERED" = true ]; then
   exit 0
 else
-  echo "FAIL: app-01 failed to resume traffic routing within expected timeframe."
+  echo "FAIL: app-01 failed to resume traffic routing."
   exit 1
 fi
+

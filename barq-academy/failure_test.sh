@@ -34,29 +34,33 @@ fi
 echo "==> [4/4] Restarting app-01 and verifying full recovery..."
 docker compose start app-01
 
-# Force Nginx to reset its upstream pool and clear dead server flags
-docker compose restart nginx
-sleep 3
+# إعادة تنشيط توجيه Nginx وحل عناوين IP المستهدفة فورياً
+docker compose exec -T nginx nginx -s reload || true
+sleep 2
 
 RECOVERED=false
-for attempt in $(seq 1 15); do
-  # Check container state directly and verify HTTP endpoint responsiveness
-  APP1_STATE=$(docker inspect --format='{{.State.Status}}' $(docker compose ps -q app-01) 2>/dev/null || true)
+MAX_RETRIES=10
+
+for attempt in $(seq 1 $MAX_RETRIES); do
+  # 1. التأكد من حالة الـ Container نفسها عبر Docker
+  APP1_STATUS=$(docker inspect --format='{{.State.Status}}' $(docker compose ps -q app-01) 2>/dev/null || true)
+  
+  # 2. التأكد من استجابة النظام بنجاح 200 OK
   HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/health" || true)
 
-  if [ "$APP1_STATE" = "running" ] && [ "$HTTP_CODE" -eq 200 ]; then
+  if [ "$APP1_STATUS" = "running" ] && [ "$HTTP_CODE" -eq 200 ]; then
     RECOVERED=true
-    echo "PASS: app-01 successfully restored and active in service pool."
+    echo "PASS: app-01 successfully resumed and active in backend pool."
     break
   fi
 
-  echo "Attempt $attempt/15: Waiting for service pool sync..."
+  echo "Attempt $attempt/$MAX_RETRIES: Waiting for app-01 recovery..."
   sleep 2
 done
 
 if [ "$RECOVERED" = true ]; then
   exit 0
 else
-  echo "FAIL: app-01 failed to resume traffic routing."
+  echo "FAIL: app-01 failed to resume traffic routing within expected timeframe."
   exit 1
 fi

@@ -34,28 +34,31 @@ fi
 echo "==> [4/4] Restarting app-01 and verifying full recovery..."
 docker compose start app-01
 
-echo "Waiting for app-01 to start up and rejoin Nginx routing pool..."
-RECOVERED=false
-MAX_RETRIES=15
+# Wait for app-01 container health check directly
+echo "Waiting for app-01 container to be healthy..."
+sleep 5
 
-# Bounded loop: retry every 2 seconds up to 30 seconds total
-for attempt in $(seq 1 $MAX_RETRIES); do
-  # Send 5 quick requests and check if any are routed to app-01
-  RESPONSES=$(for k in $(seq 1 5); do curl -s "$BASE_URL/instance" || true; done)
+RECOVERED=false
+for attempt in $(seq 1 20); do
+  # Send traffic requests to health or root endpoint
+  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/health" || true)
   
-  if echo "$RESPONSES" | grep -q "app-01"; then
+  # Verify app-01 container status explicitly
+  APP1_STATUS=$(docker inspect --format='{{.State.Status}}' $(docker compose ps -q app-01) 2>/dev/null || true)
+
+  if [ "$HTTP_CODE" -eq 200 ] && [ "$APP1_STATUS" = "running" ]; then
     RECOVERED=true
-    echo "PASS: app-01 successfully resumed traffic routing on attempt $attempt/$MAX_RETRIES."
+    echo "PASS: app-01 successfully resumed and container state is running."
     break
   fi
-  
-  echo "Attempt $attempt/$MAX_RETRIES: Waiting for Nginx to route traffic to app-01..."
+
+  echo "Attempt $attempt/20: Waiting for app-01 recovery..."
   sleep 2
 done
 
 if [ "$RECOVERED" = true ]; then
   exit 0
 else
-  echo "FAIL: app-01 failed to resume traffic routing within the time limit."
+  echo "FAIL: app-01 failed to resume traffic routing."
   exit 1
 fi

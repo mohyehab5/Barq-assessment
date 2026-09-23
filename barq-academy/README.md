@@ -1,266 +1,988 @@
-# Part 2 Execution Evidence: Docker, Networking, NGINX & Core Endpoints
+BARQ Infrastructure & Application System
 
-This document serves as complete, end-to-end reproducible evidence for Task 2 (Part 2) requirements, captured directly from the local terminal environment (`mohyehab@mohyehab`).
+Comprehensive containerized infrastructure and application stack for the barq-api Python application, including Docker orchestration, Nginx reverse proxy, load balancing, PostgreSQL persistence, Redis caching, automated validation, fault-tolerance testing, backup/restore procedures, and a security-focused CI/CD pipeline.
 
----
+Table of Contents
+Architecture
+Services
+Network Architecture
+Quick Start
+Validation & Testing
+Backup & Restore
+System Architecture Decisions
+CI/CD Pipeline
+Security Gates
+Troubleshooting & Resolved Issues
+Production Improvements
+Execution Evidence
+Architecture
 
-## 1. Container Status & Process Overview
+The system consists of two application instances behind an Nginx reverse proxy, with PostgreSQL used for persistent data and Redis used as a cache.
 
-### Command & Output:
-```bash
-mohyehab@mohyehab:~/devops/Barq-ass/barq-academy$ docker compose ps
-NAME        IMAGE                                                                                    COMMAND                  SERVICE    CREATED         STATUS                   PORTS
-app-01      barq-assessment-app-01                                                                   "python -m app.server"   app-01     8 minutes ago   Up 8 minutes (healthy)   8080/tcp
-app-02      barq-assessment-app-02                                                                   "python -m app.server"   app-02     8 minutes ago   Up 8 minutes (healthy)   8080/tcp
-nginx       nginx:1.28-alpine@sha256:a8b39bd9cf0f83869a2162827a0caf6137ddf759d50a171451b335cecc87d236    "/docker-entrypoint.…"   nginx      8 minutes ago   Up 8 minutes             0.0.0.0:8080->80/tcp, [::]:8080->80/tcp
-postgres    postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685   "docker-entrypoint.s…"   postgres   8 minutes ago   Up 8 minutes (healthy)   5432/tcp
-redis       redis:7.4-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf     "docker-entrypoint.s…"   redis      8 minutes ago   Up 8 minutes (healthy)   6379/tcp
+                    Client
+                      |
+                      | HTTP :8080
+                      v
+              +----------------+
+              | Nginx Proxy    |
+              | Load Balancer  |
+              +-------+--------+
+                      |
+             +--------+--------+
+             |                 |
+             v                 v
+       +-----------+     +-----------+
+       |  app-01   |     |  app-02   |
+       |  :8080    |     |  :8080    |
+       +-----+-----+     +-----+-----+
+             |                 |
+             +--------+--------+
+                      |
+             +--------+--------+
+             |                 |
+             v                 v
+       +-----------+     +-----------+
+       | PostgreSQL|     |   Redis   |
+       |   :5432   |     |   :6379   |
+       +-----------+     +-----------+
+Architecture Quick Reference
+Component	Purpose	Port
+Nginx	Reverse proxy and load balancer	8080
+app-01	Application instance	8080
+app-02	Application instance	8080
+PostgreSQL	Persistent database	5432
+Redis	Application cache	6379
 
+Only Nginx exposes a port to the host.
 
-Security & User Context Verification:
-mohyehab@mohyehab:~/devops/Barq-ass/barq-academy$ docker exec app-01 id
+PostgreSQL and Redis remain isolated from direct host access.
+
+Services
+Nginx
+
+Nginx acts as the public-facing reverse proxy and load balancer.
+
+Responsibilities:
+
+Accept client requests on port 8080.
+Forward requests to app-01 and app-02.
+Perform upstream failover.
+Apply connection and proxy timeouts.
+Balance traffic between application instances.
+Application Layer
+
+The application runs in two independent containers:
+
+app-01
+app-02
+
+Both expose port 8080 internally.
+
+The containers run under a non-root application user:
+
+uid=10001(app)
+gid=10001(app)
+PostgreSQL
+
+PostgreSQL provides persistent application storage.
+
+Internal port:
+
+5432
+
+The database port is not mapped to the host.
+
+Redis
+
+Redis provides application caching.
+
+Internal port:
+
+6379
+
+The Redis port is not mapped to the host.
+
+Network Architecture
+
+The application uses two Docker networks.
+
+lab-frontend
+
+Connects:
+
+Nginx
+   |
+   +-- app-01
+   |
+   +-- app-02
+lab-backend
+
+Connects:
+
+app-01
+app-02
+   |
+   +-- PostgreSQL
+   |
+   +-- Redis
+
+This separation prevents PostgreSQL and Redis from being directly exposed to the host.
+
+Request Flow
+Client
+  |
+  v
+127.0.0.1:8080
+  |
+  v
+Nginx
+  |
+  +----> app-01:8080
+  |
+  +----> app-02:8080
+             |
+             +----> PostgreSQL:5432
+             |
+             +----> Redis:6379
+Quick Start
+1. Configure Environment
+
+Create the environment file from the provided example:
+
+cp .env.example .env
+
+Update the required values inside .env.
+
+Do not commit real credentials, passwords, API keys, or other secrets to the repository.
+
+2. Build and Start the Stack
+docker compose up -d --build
+3. Check Container Status
+docker compose ps
+
+Expected services:
+
+app-01
+app-02
+nginx
+postgres
+redis
+Stop & Cleanup
+Stop Containers
+docker compose stop
+Remove Containers and Networks
+docker compose down
+Full Cleanup Including Database Volume
+docker compose down -v
+Validation & Testing
+Automated System Validation
+
+Run:
+
+chmod +x validate.sh
+./validate.sh
+
+The validation process checks:
+
+Application availability.
+HTTP endpoint status.
+Health endpoints.
+Readiness endpoints.
+Load balancing.
+Network exposure.
+Persistence behavior.
+
+The validation script should return a non-zero exit code when a required check fails.
+
+Application Endpoints
+Root Endpoint
+curl http://127.0.0.1:8080
+
+Example response:
+
+{
+  "instance_id": "app-01",
+  "message": "Welcome to BARQ Systems",
+  "service": "barq-api",
+  "version": "2.0.0"
+}
+
+A subsequent request can be served by the second application instance:
+
+{
+  "instance_id": "app-02",
+  "message": "Welcome to BARQ Systems",
+  "service": "barq-api",
+  "version": "2.0.0"
+}
+
+This demonstrates load balancing between the application replicas.
+
+Health Endpoint
+curl http://127.0.0.1:8080/health
+
+Example:
+
+{
+  "instance_id": "app-02",
+  "service": "barq-api",
+  "status": "alive",
+  "version": "2.0.0"
+}
+Readiness Endpoint
+curl http://127.0.0.1:8080/ready
+
+The readiness endpoint verifies application dependencies such as PostgreSQL and Redis.
+
+Example:
+
+{
+  "dependencies": {
+    "postgres": "unavailable",
+    "redis": "ready"
+  },
+  "instance_id": "app-01",
+  "service": "barq-api",
+  "status": "not_ready",
+  "version": "2.0.0"
+}
+Instance Endpoint
+curl http://127.0.0.1:8080/instance
+
+Repeated requests demonstrate traffic distribution:
+
+app-02
+app-01
+app-02
+app-01
+Security & User Context Verification
+
+Application containers run as a non-root user.
+
+Verify with:
+
+docker exec app-01 id
+
+Expected:
+
 uid=10001(app) gid=10001(app) groups=10001(app)
 
+This reduces the impact of a potential container-level compromise compared with running the application as root.
 
-Endpoints Test Session & Load Balancing Verification:
-mohyehab@mohyehab:~/devops/Barq-ass/barq-academy$ curl http://127.0.0.1:8080
-{"instance_id":"app-01","message":"Welcome to BARQ Systems","service":"barq-api","version":"2.0.0"}
+Fault Tolerance Testing
 
-mohyehab@mohyehab:~/devops/Barq-ass/barq-academy$ curl -s http://127.0.0.1:8080
-{"instance_id":"app-02","message":"Welcome to BARQ Systems","service":"barq-api","version":"2.0.0"}
+Run the fault-tolerance test:
 
+chmod +x failure_test.sh
+./failure_test.sh
 
-mohyehab@mohyehab:~/devops/Barq-ass/barq-academy$ curl http://127.0.0.1:8080/health
-{"instance_id":"app-02","service":"barq-api","status":"alive","version":"2.0.0"}
+The objective is to verify application behavior when one of the application instances becomes unavailable.
 
-mohyehab@mohyehab:~/devops/Barq-ass/barq-academy$ curl http://127.0.0.1:8080/ready
-{"dependencies":{"postgres":"unavailable","redis":"ready"},"instance_id":"app-01","service":"barq-api","status":"not_ready","version":"2.0.0"}
+Nginx is configured to use upstream failover so that traffic can continue to another available application instance.
 
-mohyehab@mohyehab:~/devops/Barq-ass/barq-academy$ curl http://127.0.0.1:8080/instance
-{"instance_id":"app-02","service":"barq-api","status":"ok","version":"2.0.0"}
+Backup & Restore
+Create Database Backup
+chmod +x backup.sh restore.sh
+./backup.sh
+Restore Database
+./restore.sh ./backups/latest.sql
+System Architecture Decisions
+Q1. What failed first?
 
-mohyehab@mohyehab:~/devops/Barq-ass/barq-academy$ curl http://127.0.0.1:8080/instance
-{"instance_id":"app-01","service":"barq-api","status":"ok","version":"2.0.0"}
+The /records endpoint initially returned:
 
-mohyehab@mohyehab:~/devops/Barq-ass/barq-academy$ curl http://127.0.0.1:8080/instance
-{"instance_id":"app-02","service":"barq-api","status":"ok","version":"2.0.0"}
+HTTP 500
 
-mohyehab@mohyehab:~/devops/Barq-ass/barq-academy$ curl http://127.0.0.1:8080/instance
-{"instance_id":"app-01","service":"barq-api","status":"ok","version":"2.0.0"}
+with:
 
-# Barq Infrastructure & Application System
+{
+  "error": "postgres_unavailable"
+}
+Root Cause
 
-Comprehensive orchestration, fault tolerance, and persistence setup for the `barq-api` Python application stack.
+Application logs showed errors such as:
 
-## Architecture Quick Reference
-- **Nginx Reverse Proxy:** Listening on public port `8080`
-- **Application Layer:** `app-01` and `app-02` (FastAPI / Flask)
-- **Database:** PostgreSQL 15 (`postgres:5432` - isolated network)
-- **Cache:** Redis (`redis:6379` - isolated network)
+psycopg2.OperationalError:
+could not translate host name "postgres" to address:
+Name or service not known
 
----
+The issue occurred because app-01 was attached to lab-backend while PostgreSQL was isolated on another network.
 
-## Setup & Execution Commands
+Resolution
 
-### 1. Build and Start Stack
-```bash
-cp .env.example .env
+Placing the application and PostgreSQL containers on the same internal Docker network allowed Docker DNS resolution to work correctly.
+
+Q2. How was Load Balancing Verified?
+
+Nginx access logs showed alternating upstream addresses:
+
+172.20.0.3:8080
+172.20.0.4:8080
+
+This demonstrated round-robin traffic distribution between the application instances.
+
+Repeated requests to:
+
+curl http://127.0.0.1:8080/instance
+
+also returned:
+
+app-01
+app-02
+app-01
+app-02
+
+To avoid double-counting requests during analysis, Nginx edge access logs can be filtered using unique request IDs or upstream IP addresses.
+
+Q3. Why These Ports and Networks?
+
+The complete request flow is:
+
+Client
+  |
+  v
+Nginx :8080
+  |
+  v
+Application :8080
+  |
+  +----> PostgreSQL :5432
+  |
+  +----> Redis :6379
+Network Boundaries
+
+lab-frontend:
+
+Nginx <-> Applications
+
+lab-backend:
+
+Applications <-> PostgreSQL
+Applications <-> Redis
+Port Security
+
+Only:
+
+8080
+
+is exposed to the host.
+
+The following remain internal:
+
+5432
+6379
+Readiness
+
+PostgreSQL readiness can be checked using:
+
+pg_isready -U barq_app
+
+This verifies that PostgreSQL is accepting connections before application connection pools are initialized.
+
+Q4. Why These Timeouts, Retries and Restart Settings?
+Restart Policy
+restart: unless-stopped
+
+This allows containers to automatically recover from transient failures without requiring manual intervention.
+
+Nginx Connection Timeout
+proxy_connect_timeout 3s
+
+This prevents Nginx workers from waiting indefinitely when an upstream application becomes unavailable.
+
+Upstream Failover
+
+Nginx uses upstream retry behavior for errors and timeouts, allowing traffic to move to another available application instance.
+
+For example:
+
+app-01 unavailable
+       |
+       v
+Nginx
+       |
+       v
+app-02
+Q5. When Should Validation Fail?
+
+Validation should fail when required system behavior is broken.
+
+Examples include:
+
+Endpoint returns a status other than HTTP 200.
+Load balancing is not working.
+PostgreSQL port 5432 is unexpectedly exposed to the host.
+Redis port 6379 is unexpectedly exposed to the host.
+Persistence checks fail.
+Required health/readiness checks fail.
+What Does Green CI Prove?
+
+A successful CI pipeline demonstrates that the tested:
+
+Code
+Configuration
+Container orchestration
+Health checks
+API endpoints
+Security checks
+
+passed within the CI test environment.
+
+What Green CI Does Not Prove
+
+A successful pipeline does not prove:
+
+Real-world performance under massive concurrent traffic.
+DDoS resistance.
+Cloud network latency behavior.
+Long-term disk fragmentation behavior.
+Absence of zero-day vulnerabilities in container base images.
+Q6. Remaining Single Points of Failure
+
+The current architecture contains remaining single points of failure.
+
+Nginx
+
+There is a single Nginx reverse proxy instance.
+
+PostgreSQL
+
+There is a single PostgreSQL primary container without database replication or failover.
+
+Production Improvements
+
+Possible production architecture:
+
+              Cloud Load Balancer
+                       |
+              +--------+--------+
+              |                 |
+           Nginx-01          Nginx-02
+              |                 |
+              +--------+--------+
+                       |
+                Application Layer
+                  /           \
+              app-01         app-02
+                       |
+                 Database HA
+
+For example:
+
+AWS Application Load Balancer across multiple Availability Zones.
+AWS RDS Multi-AZ for PostgreSQL.
+Patroni-managed PostgreSQL HA cluster.
+CI/CD Pipeline
+
+The repository includes a security-focused CI/CD architecture.
+
+Developer Commit
+       |
+       v
++-------------------------+
+| 1. Source & Linting    |
+| Git Checkout            |
+| Environment Setup       |
+| Code Linting            |
++------------+------------+
+             |
+             v
++-------------------------+
+| 2. SAST & SCA           |
+| SonarQube / Bandit      |
+| Semgrep / Trivy FS      |
++------------+------------+
+             |
+             v
++-------------------------+
+| 3. Secrets Detection    |
+| Gitleaks / TruffleHog   |
++------------+------------+
+             |
+             v
++-------------------------+
+| 4. Container Build      |
+| Docker Compose          |
+| Trivy Image Scan        |
++------------+------------+
+             |
+             v
++-------------------------+
+| 5. Security Report      |
+| DefectDojo              |
++------------+------------+
+             |
+             v
++-------------------------+
+| 6. Deployment            |
+| Target Environment      |
+| / Kubernetes Cluster   |
++-------------------------+
+CI/CD Pipeline Stages
+Stage 1 — Source Control & Environment Setup
+Trigger
+
+The pipeline runs on code pushes or Pull Requests to monitored branches such as:
+
+main
+dev
+Actions
+Checkout repository source code.
+Configure the required runtime environment.
+Cache dependencies where applicable.
+Prepare the CI environment.
+Stage 2 — SAST & SCA
+Objective
+
+Identify application security issues and vulnerable dependencies before deployment.
+
+SAST Tools
+
+Possible tools include:
+
+SonarQube
+Bandit
+Semgrep
+SCA / Dependency Scanning
+
+Possible tools include:
+
+Safety
+OWASP Dependency-Check
+Trivy FS
+Failure Criteria
+
+The pipeline can be configured to stop when HIGH or CRITICAL vulnerabilities are detected.
+
+Stage 3 — Secrets Detection
+Objective
+
+Prevent credentials and sensitive information from being committed to source control.
+
+Tools
+Gitleaks
+TruffleHog
+
+The scanner checks the current working tree and, where configured, commit history for:
+
+API tokens
+Passwords
+Private keys
+Credentials
+Other sensitive secrets
+Stage 4 — Container Build & Trivy Security Scan
+Objective
+
+Build the application containers and identify vulnerabilities in container layers and operating-system packages.
+
+Build the stack:
+
 docker compose up -d --build
 
-
-Stop and Cleanup Stack:
-
-   # Stop containers
-   docker compose stop
-
-   # Destroy containers and isolated networks
-   docker compose down
-
-   # Full cleanup (including database volume)
-   docker compose down -v
-
-
-
-
-Run Automated System Validation:
-   python3 validate.py
-
-Run Failover and Fault-Tolerance Tests
-  chmod +x failure_test.sh
-  ./failure_test.sh
-
-Execute Backup and Restore Procedure:
-      # Create database backup
-      chmod +x backup.sh restore.sh
-      ./backup.sh
- 
-       # Restore database from backup
-      ./restore.sh ./backups/latest.sql
-      
-Answers to System Architecture Questions:
-
-
-
-Q1: What failed first? What proved the cause? Which failed attempt taught you something?
-
-    What Failed First: The /records endpoint returned HTTP 500 ({"error":"postgres_unavailable"}).
-
-    Proof of Cause: Running docker logs app-01 revealed psycopg2.OperationalError: could not translate host name "postgres" to address: Name or service not known and authentication failure messages.
-
-    Key Insight from Failed Attempt: Attaching app-01 to lab-backend while leaving postgres on an isolated network broke host resolution. Placing both on a shared internal network (lab-backend) instantly resolved DNS lookups.
-
-Q2: What patterns did the logs reveal? How did you avoid double-counting requests?
-
-    Nginx access logs showed alternating UPSTREAM: 172.20.0.3:8080 and 172.20.0.4:8080 headers, confirming round-robin load balancing.
-
-    To avoid double-counting requests in analysis, Nginx edge access logs were filtered by unique $request_id or upstream IP, separating proxy ingress logs from application logs.
-
-Q3: How do requests flow? Why these ports, networks, and readiness checks?
-
-    Flow: Client -> http://127.0.0.1:8080 (Nginx) -> Upstream app-01 / app-02 (Port 8080) -> PostgreSQL (Port 5432) / Redis (Port 6379).
-
-    Network Boundaries: lab-frontend connects Nginx and App instances. lab-backend connects App instances, PostgreSQL, and Redis.
-
-    Port Security: Only port 8080 is exposed to the host. DB (5432) and Cache (6379) ports are unmapped from the host network.
-
-    Readiness Checks: pg_isready -U barq_app ensures PostgreSQL is accepting sockets before app containers initiate connection pools.
-
-Q4: Why these timeouts, retries, restart settings, and resource limits?
-
-    Restart Policy (restart: unless-stopped): Ensures transient container crashes self-heal without manual intervention.
-
-    Proxy Timeouts (proxy_connect_timeout 3s): Prevents Nginx worker exhaustion if an app backend hangs.
-
-    Upstream Retries (proxy_next_upstream error timeout http_502): Allows Nginx to transparently failover to app-02 if app-01 drops without returning an HTTP 500 to the client.
-
-Q5: When should validation fail? What does green CI prove, or not prove?
-
-    Validation Fails When: Endpoints return HTTP status != 200, load balancing fails, prohibited ports (5432, 6379) are accessible on host IP, or persistence checks fail.
-
-    Green CI Proves: The code, configuration, health checks, multi-container orchestration, and API endpoints work synchronously in an isolated environment.
-
-    Green CI Does NOT Prove: Real-world performance under massive concurrent load (DDOS), cloud network latency, long-term disk fragmentation, or zero zero-day vulnerabilities in container base images.
-
-Q6: Which single points of failure remain? How would you fix them in production?
-
-    Remaining SPOFs:
-
-        Single Nginx reverse proxy instance.
-
-        Single PostgreSQL primary container without replica/failover.
-
-    Production Resolution:
-
-        Deploy HAProxy or Cloud Load Balancer (AWS ALB) across multiple Availability Zones.
-
-        Replace containerized single-node Postgres with AWS RDS Multi-AZ or a patroni-managed PostgreSQL HA cluster.
-
-Q7: What would you improve? How did you verify AI-assisted work?
-
-    Future Improvements: Implement SSL/TLS termination on Nginx, inject secrets via HashiCorp Vault or AWS Secrets Manager, and add Prometheus/Grafana monitoring.
-
-    AI Verification: Every AI-generated script was tested via docker compose up, checked with raw socket/curl tests, and cross-referenced against security best practices.
-
-
-
-
-
-Pipeline Architecture & Security Gates:
-
-[ Developer Commit ]
-         │
-         ▼
-┌─────────────────────────┐
-│  1. Source & Linting    │ ──► Git Checkout, Environment Setup & Code Linting
-└────────┬────────────────┘
-         │
-         ▼
-┌─────────────────────────┐
-│  2. SAST & SCA Scanning │ ──► Static Code & Dependency Security (SonarQube/Bandit/Trivy FS)
-└────────┬────────────────┘
-         │
-         ▼
-┌─────────────────────────┐
-│  3. Secrets Detection   │ ──► Hardcoded Credentials & Token Scanning (Gitleaks/Trufflehog)
-└────────┬────────────────┘
-         │
-         ▼
-┌─────────────────────────┐
-│  4. Container Build &   │ ──► Docker Compose Build, Dynamic Image Resolution, 
-│     Trivy Vulnerability │     and Runtime Image Vulnerability Scanning
-└────────┬────────────────┘
-         │
-         ▼
-┌─────────────────────────┐
-│  5. Security Report     │ ──► Vulnerability Centralization & Parsing (DefectDojo)
-└────────┬────────────────┘
-         │
-         ▼
-┌─────────────────────────┐
-│  6. Deployment          │ ──► Deployment to Target Environment / Kubernetes Cluster
-└─────────────────────────┘
-
- Detailed Workflow Stages
-
-Stage 1: Source Control & Environment Setup
-
-Trigger: Code push or Pull Request (PR) to monitored branches (main, dev).
-
-Actions:
-
-Pull source code from repository.
-
-Setup runtime environments (Python/Node/Go) and cache dependencies.
-
-Stage 2: Static Application Security Testing (SAST) & SCA
-
-Objective: Identify security flaws in application source code and third-party dependencies before build.
-
-Tools:
-
-SAST: SonarQube / Bandit / Semgrep
-
-SCA (Dependency Scan): Safety / OWASP Dependency-Check / Trivy FS
-
-Fail Criteria: Pipeline halts on HIGH or CRITICAL vulnerabilities.
-
-Stage 3: Secrets & Credentials Detection
-
-Objective: Ensure no private keys, API tokens, or credentials are hardcoded into source code.
-
-Tools: Gitleaks / TruffleHog
-
-Action: Scans commit history and current working tree.
-
-Stage 4: Container Build & Image Security (Trivy Scan)
-
-Objective: Build application container and scan container layers/OS packages for CVEs.
-
-Workflow:
-
-Build container stack using Docker Compose:
-
-docker compose up -d --build
-
-
-Dynamically extract the running container's exact Image ID to eliminate hardcoded tag issues:
+Instead of relying on a hardcoded image tag, the running container's exact image ID can be retrieved dynamically:
 
 APP_IMAGE_ID=$(docker inspect -f '{{.Image}}' app-01)
 
-
-Execute Trivy container vulnerability scan targeting the extracted Image ID:
+Then scan the exact image:
 
 trivy image --severity HIGH,CRITICAL "$APP_IMAGE_ID"
 
+This ensures that the vulnerability scan targets the image actually running in the environment.
 
-Stage 5: Vulnerability Management & Centralization
+Stage 5 — Vulnerability Management
+Objective
 
-Objective: Centralize security findings across all pipeline scanners.
+Centralize security findings generated by the different pipeline scanners.
 
-Tools: DefectDojo Integration
+Platform
+DefectDojo
+Process
 
-Action: Export SAST, SCA, and Container scan reports (JSON/SARIF) and import them into DefectDojo via API for deduplication and tracking.
+Security reports from:
 
-Stage 6: Deployment
+SAST
+SCA
+Container scanning
 
-Objective: Deploy validated application artifacts to the target environment.
+can be exported in formats such as:
+
+JSON
+SARIF
+
+and imported into DefectDojo through its API.
+
+DefectDojo can then be used for:
+
+Finding centralization.
+Deduplication.
+Vulnerability tracking.
+Security reporting.
+Stage 6 — Deployment
+
+The final stage deploys validated application artifacts to the target environment.
+
+Possible target:
+
+Kubernetes Cluster
+
+The deployment stage should only proceed after the required validation and security gates have passed.
+
+Troubleshooting & Resolved Issues
+1. GitHub Actions Could Not Find the Workflow
+Issue
+
+After creating the workflow file, it did not appear in the GitHub Actions tab.
+
+GitHub displayed the default:
+
+Get started with GitHub Actions
+
+page, indicating that no workflow configuration was detected.
+
+Cause
+
+The required directory structure was missing or the workflow file was misplaced.
+
+GitHub Actions expects workflow files under:
+
+.github/workflows/
+
+at the repository root.
+
+Resolution
+
+Create the directory:
+
+mkdir -p .github/workflows
+
+Move the workflow:
+
+mv ci.yml .github/workflows/ci.yml
+
+Commit and push:
+
+git add .github/workflows/ci.yml
+git commit -m "docs: add GitHub Actions workflow in standard .github directory"
+git push origin main
+
+Status: Resolved
+
+2. Workflow Located Inside Application Directory
+Issue
+
+The workflow was committed but still did not trigger.
+
+The repository structure contained:
+
+barq-academy/.github/workflows/ci.yml
+Cause
+
+The .github directory was located inside the application directory instead of the repository root.
+
+The expected structure is:
+
+repository-root/
+├── .github/
+│   └── workflows/
+│       └── ci.yml
+└── barq-academy/
+Resolution
+
+Move .github to the repository root:
+
+mv barq-academy/.github .github
+
+Then:
+
+git add .
+git commit -m "fix: move .github folder to repository root for proper Actions detection"
+git push origin main
+
+Status: Resolved
+
+3. CI Environment Setup Failure
+Issue
+
+The pipeline failed during environment setup.
+
+Commands such as:
+
+docker compose down
+
+returned errors similar to:
+
+no configuration file provided: not found
+Causes
+
+Two issues were identified:
+
+The workflow was executing from the repository root while the application files were located in:
+barq-academy/
+The .env file was not available inside the CI environment.
+Resolution
+
+The workflow was configured to use:
+
+defaults:
+  run:
+    working-directory: barq-academy
+
+The CI environment also creates the required .env file dynamically before starting the services.
+
+Example:
+
+- name: Environment Setup
+  run: |
+    cat << 'EOF' > .env
+    POSTGRES_USER=...
+    # ... remaining environment variables ...
+    EOF
+
+Status: Resolved
+
+4. Python Validation Script Failure
+Issue
+
+The automated validation step initially executed:
+
+python3 validate.py
+
+and failed with:
+
+exit code 2
+
+The script contained a placeholder message:
+
+NOT IMPLEMENTED: write bounded checks with PASS/FAIL and non-zero failure exits.
+Cause
+
+validate.py was only a placeholder and did not contain actual validation logic or proper failure exit codes.
+
+Resolution
+
+The placeholder was replaced with a validation implementation using:
+
+requests
+sys.exit()
+
+The validation suite checked connectivity, health endpoints, and load balancing.
+
+Status: Resolved
+
+5. Validation Migrated from Python to Bash
+Issue
+
+The Python validation approach required additional dependencies such as:
+
+requests
+psycopg2-binary
+redis
+
+This introduced unnecessary dependency overhead for basic network and endpoint validation.
+
+Resolution
+
+Validation was migrated from:
+
+validate.py
+
+to:
+
+validate.sh
+
+The workflow now executes:
+
+- name: Run Automated Stack Validation
+  run: |
+    chmod +x validate.sh
+    ./validate.sh
+
+Python setup and dependency installation steps were removed from the validation workflow.
+
+Status: Resolved
+
+6. Network Binding Error: localhost vs 0.0.0.0
+Issue
+
+The Bash validation script failed with:
+
+FAIL: Root endpoint unreachable
+HTTP 000
+
+while testing:
+
+localhost:8080
+
+At the same time, Docker logs showed that the application services were running successfully.
+
+Cause
+
+The validation target did not match the network interface used by the CI/Docker environment.
+
+Resolution
+
+The validation script was updated to use:
+
+BASE_URL="http://0.0.0.0:8080"
+
+instead of targeting:
+
+localhost:8080
+
+This allowed the validation process to reach the exposed Nginx service correctly.
+
+Status: Resolved
+
+Production Improvements
+
+The current architecture can be extended for production environments.
+
+High Availability
+
+Replace the single Nginx instance with:
+
+AWS ALB
+
+or another highly available load-balancing solution.
+
+Deploy infrastructure across multiple Availability Zones.
+
+Database High Availability
+
+Replace the single PostgreSQL container with:
+
+AWS RDS Multi-AZ
+
+or:
+
+Patroni PostgreSQL HA
+TLS
+
+Implement SSL/TLS termination at the reverse proxy or load balancer.
+
+Secrets Management
+
+Replace environment-file based secrets with a dedicated secrets manager such as:
+
+HashiCorp Vault
+AWS Secrets Manager
+Monitoring
+
+Add:
+
+Prometheus
+Grafana
+
+for infrastructure and application monitoring.
+
+AI-Assisted Development Verification
+
+AI-assisted scripts and configuration changes were verified through actual execution rather than being accepted without testing.
+
+Verification included:
+
+docker compose up
+Docker container status checks.
+Raw curl endpoint tests.
+Network connectivity tests.
+Application log inspection.
+Security-oriented configuration review.
+Cross-checking against security best practices.
+Execution Evidence
+
+The following evidence demonstrates the running stack:
+
+docker compose ps
+
+Expected services include:
+
+app-01       Up (healthy)
+app-02       Up (healthy)
+nginx        Up
+postgres     Up (healthy)
+redis        Up (healthy)
+
+Nginx exposes:
+
+0.0.0.0:8080 -> 80/tcp
+
+while PostgreSQL and Redis remain internal.
+
+The application containers run as:
+
+uid=10001(app)
+gid=10001(app)
+
+Repeated requests to the application demonstrate traffic distribution between:
+
+app-01
+app-02
+
+The execution evidence and endpoint testing confirm the container orchestration, Nginx reverse proxy, application replicas, internal PostgreSQL/Redis services, and load-balancing behavior.
+
+Project Status
+Area	Status
+Docker Compose Stack	✅ Working
+Nginx Reverse Proxy	✅ Working
+Application Replicas	✅ Working
+Load Balancing	✅ Verified
+PostgreSQL	✅ Configured
+Redis	✅ Configured
+Health Checks	✅ Implemented
+Readiness Checks	✅ Implemented
+Automated Validation	✅ Implemented
+Fault-Tolerance Testing	✅ Implemented
+Backup / Restore	✅ Implemented
+GitHub Actions	✅ Configured
+SAST / SCA	✅ Pipeline Design
+Secrets Detection	✅ Pipeline Design
+Trivy Container Scan	✅ Pipeline Design
+DefectDojo Integration	✅ Pipeline Design
+Kubernetes Deployment	🔄 Target Deployment Stage
+Production HA	🔄 Future Improvement
+TLS	🔄 Future Improvement
+Prometheus / Grafana	🔄 Future Improvement
+Repository Structure
+
+A recommended repository structure is:
+
+repository-root/
+│
+├── .github/
+│   └── workflows/
+│       └── ci.yml
+│
+├── barq-academy/
+│   ├── docker-compose.yml
+│   ├── Dockerfile
+│   ├── .env.example
+│   ├── validate.sh
+│   ├── failure_test.sh
+│   ├── backup.sh
+│   ├── restore.sh
+│   └── ...
+│
+└── README.md
+Summary
+
+This project demonstrates a containerized application environment with:
+
+Docker Compose orchestration.
+Nginx reverse proxy.
+Application replicas.
+Round-robin load balancing.
+PostgreSQL persistence.
+Redis caching.
+Internal network segmentation.
+Health and readiness checks.
+Fault-tolerance testing.
+Database backup and restore.
+Automated Bash-based validation.
+GitHub Actions CI/CD.
+SAST and SCA security scanning.
+Secrets detection.
+Trivy container vulnerability scanning.
+DefectDojo vulnerability management.
+Deployment preparation for Kubernetes.
+
+The architecture was iteratively tested and corrected through actual Docker execution, endpoint testing, log analysis, and CI troubleshooting.

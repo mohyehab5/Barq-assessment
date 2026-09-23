@@ -72,23 +72,23 @@ Balance traffic between application instances.
 Application Layer
 
 The application runs in two independent containers:
-
+```
 app-01
 app-02
-
-Both expose port 8080 internally.
+```
+Both expose port `8080` internally.
 
 The containers run under a non-root application user:
-
+```
 uid=10001(app)
 gid=10001(app)
 PostgreSQL
-
+```
 PostgreSQL provides persistent application storage.
 
 Internal port:
 
-5432
+`5432`
 
 The database port is not mapped to the host.
 
@@ -98,7 +98,7 @@ Redis provides application caching.
 
 Internal port:
 
-6379
+`6379`
 
 The Redis port is not mapped to the host.
 
@@ -109,7 +109,7 @@ The application uses two Docker networks.
 lab-frontend
 
 Connects:
-
+```
 Nginx
    |
    +-- app-01
@@ -125,9 +125,9 @@ app-02
    +-- PostgreSQL
    |
    +-- Redis
-
+```
 This separation prevents PostgreSQL and Redis from being directly exposed to the host.
-
+```
 Request Flow
 Client
   |
@@ -144,21 +144,22 @@ Nginx
              +----> PostgreSQL:5432
              |
              +----> Redis:6379
+```
 Quick Start
 1. Configure Environment
 
 Create the environment file from the provided example:
 
-cp .env.example .env
+`cp .env.example .env`
 
-Update the required values inside .env.
+Update the required values inside `.env`.
 
 Do not commit real credentials, passwords, API keys, or other secrets to the repository.
 
 2. Build and Start the Stack
-docker compose up -d --build
+`docker compose up -d --build
 3. Check Container Status
-docker compose ps
+`docker compose ps`
 
 Expected services:
 
@@ -178,9 +179,10 @@ Validation & Testing
 Automated System Validation
 
 Run:
-
+```
 chmod +x validate.sh
 ./validate.sh
+```
 
 The validation process checks:
 
@@ -196,46 +198,48 @@ The validation script should return a non-zero exit code when a required check f
 
 Application Endpoints
 Root Endpoint
-curl http://127.0.0.1:8080
+`curl http://127.0.0.1:8080`
 
 Example response:
-
+```
 {
   "instance_id": "app-01",
   "message": "Welcome to BARQ Systems",
   "service": "barq-api",
   "version": "2.0.0"
 }
-
+```
 A subsequent request can be served by the second application instance:
-
+```
 {
   "instance_id": "app-02",
   "message": "Welcome to BARQ Systems",
   "service": "barq-api",
   "version": "2.0.0"
 }
+```
 
 This demonstrates load balancing between the application replicas.
 
 Health Endpoint
-curl http://127.0.0.1:8080/health
+`curl http://127.0.0.1:8080/health`
 
 Example:
-
+```
 {
   "instance_id": "app-02",
   "service": "barq-api",
   "status": "alive",
   "version": "2.0.0"
 }
+```
 Readiness Endpoint
-curl http://127.0.0.1:8080/ready
+`curl http://127.0.0.1:8080/ready`
 
 The readiness endpoint verifies application dependencies such as PostgreSQL and Redis.
 
 Example:
-
+```
 {
   "dependencies": {
     "postgres": "unavailable",
@@ -246,15 +250,17 @@ Example:
   "status": "not_ready",
   "version": "2.0.0"
 }
+```
 Instance Endpoint
-curl http://127.0.0.1:8080/instance
+`curl http://127.0.0.1:8080/instance`
 
 Repeated requests demonstrate traffic distribution:
-
+```
 app-02
 app-01
 app-02
 app-01
+```
 Security & User Context Verification
 
 Application containers run as a non-root user.
@@ -265,7 +271,7 @@ docker exec app-01 id
 
 Expected:
 
-uid=10001(app) gid=10001(app) groups=10001(app)
+`uid=10001(app) gid=10001(app) groups=10001(app)`
 
 This reduces the impact of a potential container-level compromise compared with running the application as root.
 
@@ -291,13 +297,14 @@ Q1. What failed first?
 
 The /records endpoint initially returned:
 
-HTTP 500
+`HTTP 500`
 
 with:
-
+```
 {
   "error": "postgres_unavailable"
 }
+```
 Root Cause
 
 Application logs showed errors such as:
@@ -315,29 +322,29 @@ Placing the application and PostgreSQL containers on the same internal Docker ne
 Q2. How was Load Balancing Verified?
 
 Nginx access logs showed alternating upstream addresses:
-
+```
 172.20.0.3:8080
 172.20.0.4:8080
-
+```
 This demonstrated round-robin traffic distribution between the application instances.
 
 Repeated requests to:
 
-curl http://127.0.0.1:8080/instance
+`curl http://127.0.0.1:8080/instance`
 
 also returned:
-
+```
 app-01
 app-02
 app-01
 app-02
-
+```
 To avoid double-counting requests during analysis, Nginx edge access logs can be filtered using unique request IDs or upstream IP addresses.
 
 Q3. Why These Ports and Networks?
 
 The complete request flow is:
-
+```
 Client
   |
   v
@@ -350,7 +357,7 @@ Application :8080
   |
   +----> Redis :6379
 Network Boundaries
-
+```
 lab-frontend:
 
 Nginx <-> Applications
@@ -368,14 +375,14 @@ Only:
 is exposed to the host.
 
 The following remain internal:
-
+```
 5432
 6379
 Readiness
-
+```
 PostgreSQL readiness can be checked using:
 
-pg_isready -U barq_app
+`pg_isready -U barq_app`
 
 This verifies that PostgreSQL is accepting connections before application connection pools are initialized.
 
@@ -395,6 +402,7 @@ Upstream Failover
 Nginx uses upstream retry behavior for errors and timeouts, allowing traffic to move to another available application instance.
 
 For example:
+```
 
 app-01 unavailable
        |
@@ -403,6 +411,7 @@ Nginx
        |
        v
 app-02
+```
 Q5. When Should Validation Fail?
 
 Validation should fail when required system behavior is broken.
@@ -475,7 +484,7 @@ Patroni-managed PostgreSQL HA cluster.
 CI/CD Pipeline
 
 The repository includes a security-focused CI/CD architecture.
-
+```
 Developer Commit
        |
        v
@@ -519,6 +528,7 @@ Developer Commit
 | / Kubernetes Cluster   |
 +-------------------------+
 CI/CD Pipeline Stages
+```
 Stage 1 — Source Control & Environment Setup
 Trigger
 
@@ -645,7 +655,7 @@ The required directory structure was missing or the workflow file was misplaced.
 
 GitHub Actions expects workflow files under:
 
-.github/workflows/
+`.github/workflows/`
 
 at the repository root.
 
@@ -653,15 +663,15 @@ Resolution
 
 Create the directory:
 
-mkdir -p .github/workflows
+`mkdir -p .github/workflows`
 
 Move the workflow:
 
-mv ci.yml .github/workflows/ci.yml
+`mv ci.yml .github/workflows/ci.yml`
 
 Commit and push:
 
-git add .github/workflows/ci.yml
+git add `.github/workflows/ci.yml`
 git commit -m "docs: add GitHub Actions workflow in standard .github directory"
 git push origin main
 
@@ -680,12 +690,13 @@ Cause
 The .github directory was located inside the application directory instead of the repository root.
 
 The expected structure is:
-
+```
 repository-root/
 ├── .github/
 │   └── workflows/
 │       └── ci.yml
 └── barq-academy/
+```
 Resolution
 
 Move .github to the repository root:
@@ -725,19 +736,19 @@ The workflow was configured to use:
 
 defaults:
   run:
-    working-directory: barq-academy
+    working-directory: `barq-academy`
 
 The CI environment also creates the required .env file dynamically before starting the services.
 
 Example:
-
+```
 - name: Environment Setup
   run: |
     cat << 'EOF' > .env
     POSTGRES_USER=...
     # ... remaining environment variables ...
     EOF
-
+```
 Status: Resolved
 
 4. Python Validation Script Failure
@@ -749,7 +760,7 @@ python3 validate.py
 
 and failed with:
 
-exit code 2
+`exit code 2`
 
 The script contained a placeholder message:
 
@@ -763,7 +774,7 @@ Resolution
 The placeholder was replaced with a validation implementation using:
 
 requests
-sys.exit()
+`sys.exit()`
 
 The validation suite checked connectivity, health endpoints, and load balancing.
 
@@ -773,11 +784,11 @@ Status: Resolved
 Issue
 
 The Python validation approach required additional dependencies such as:
-
+```
 requests
 psycopg2-binary
 redis
-
+```
 This introduced unnecessary dependency overhead for basic network and endpoint validation.
 
 Resolution
@@ -793,15 +804,16 @@ validate.sh
 The workflow now executes:
 
 - name: Run Automated Stack Validation
+ ```
   run: |
     chmod +x validate.sh
     ./validate.sh
-
+```
 Python setup and dependency installation steps were removed from the validation workflow.
 
 Status: Resolved
 
-6. Network Binding Error: localhost vs 0.0.0.0
+6. Network Binding Error: localhost vs `0.0.0.0`
 Issue
 
 The Bash validation script failed with:
@@ -822,12 +834,12 @@ The validation target did not match the network interface used by the CI/Docker 
 Resolution
 
 The validation script was updated to use:
-
+```
 BASE_URL="http://0.0.0.0:8080"
-
+```
 instead of targeting:
 
-localhost:8080
+localhost:`8080`
 
 This allowed the validation process to reach the exposed Nginx service correctly.
 
@@ -891,7 +903,7 @@ Cross-checking against security best practices.
 Execution Evidence
 
 The following evidence demonstrates the running stack:
-
+```
 docker compose ps
 
 Expected services include:
@@ -912,40 +924,41 @@ The application containers run as:
 
 uid=10001(app)
 gid=10001(app)
-
+```
 Repeated requests to the application demonstrate traffic distribution between:
-
+```
 app-01
 app-02
-
+```
 The execution evidence and endpoint testing confirm the container orchestration, Nginx reverse proxy, application replicas, internal PostgreSQL/Redis services, and load-balancing behavior.
-
+```
 Project Status
 Area	Status
-Docker Compose Stack	✅ Working
-Nginx Reverse Proxy	✅ Working
-Application Replicas	✅ Working
-Load Balancing	✅ Verified
-PostgreSQL	✅ Configured
-Redis	✅ Configured
-Health Checks	✅ Implemented
-Readiness Checks	✅ Implemented
-Automated Validation	✅ Implemented
-Fault-Tolerance Testing	✅ Implemented
-Backup / Restore	✅ Implemented
-GitHub Actions	✅ Configured
-SAST / SCA	✅ Pipeline Design
-Secrets Detection	✅ Pipeline Design
-Trivy Container Scan	✅ Pipeline Design
-DefectDojo Integration	✅ Pipeline Design
-Kubernetes Deployment	🔄 Target Deployment Stage
-Production HA	🔄 Future Improvement
-TLS	🔄 Future Improvement
-Prometheus / Grafana	🔄 Future Improvement
+Docker Compose Stack	    ✅ Working
+Nginx Reverse Proxy     	✅ Working
+Application Replicas	    ✅ Working
+Load Balancing	            ✅ Verified
+PostgreSQL	                ✅ Configured
+Redis	                    ✅ Configured
+Health Checks	            ✅ Implemented
+Readiness Checks	        ✅ Implemented
+Automated Validation	    ✅ Implemented
+Fault-Tolerance Testing	    ✅ Implemented
+Backup / Restore	        ✅ Implemented
+GitHub Actions	            ✅ Configured
+SAST / SCA	                ✅ Pipeline Design
+Secrets Detection	        ✅ Pipeline Design
+Trivy Container Scan	    ✅ Pipeline Design
+DefectDojo Integration   	✅ Pipeline Design
+Kubernetes Deployment	    🔄 Target Deployment Stage
+Production HA	            🔄 Future Improvement
+TLS	                        🔄 Future Improvement
+Prometheus / Grafana	    🔄 Future Improvement
 Repository Structure
+```
 
 A recommended repository structure is:
-
+```
 repository-root/
 │
 ├── .github/
@@ -963,6 +976,7 @@ repository-root/
 │   └── ...
 │
 └── README.md
+```
 Summary
 
 This project demonstrates a containerized application environment with:

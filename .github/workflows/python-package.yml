@@ -175,7 +175,7 @@ jobs:
       - name: Run Failover & HA Recovery Test
         run: |
           chmod +x scripts/failure_test.sh
-          bash scripts/failure_test.sh
+          python3  scripts/failure_test.sh
 
 
       # ============================================================

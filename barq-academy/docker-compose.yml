@@ -37,6 +37,7 @@ services:
     image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
     container_name: postgres
     restart: unless-stopped
+    shm_size: 128mb
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-barq_app}
       POSTGRES_DB: ${POSTGRES_DB:-barq_tasks}
@@ -131,7 +132,6 @@ services:
 networks:
   lab-frontend:
   lab-backend:
-    internal: true
 
 volumes:
   postgres-data:

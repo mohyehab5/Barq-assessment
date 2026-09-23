@@ -4,7 +4,16 @@ x-app: &app
   build: .
   init: true
   restart: unless-stopped
-  env_file: .env
+  environment:
+    APP_HOST: "0.0.0.0"
+    APP_PORT: "8080"
+    POSTGRES_HOST: "postgres"
+    REDIS_HOST: "redis"
+    POSTGRES_USER: ${POSTGRES_USER:-barq_app}
+    POSTGRES_DB: ${POSTGRES_DB:-barq_tasks}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-BarqLabOnly_7qN2vK8c}
+    DATABASE_URL: ${DATABASE_URL:-postgresql://barq_app:BarqLabOnly_7qN2vK8c@postgres:5432/barq_tasks}
+    REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
   deploy:
     resources:
       limits:
@@ -77,6 +86,11 @@ services:
       INSTANCE_ID: "app-01"
       POSTGRES_HOST: "postgres"
       REDIS_HOST: "redis"
+      POSTGRES_USER: ${POSTGRES_USER:-barq_app}
+      POSTGRES_DB: ${POSTGRES_DB:-barq_tasks}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-BarqLabOnly_7qN2vK8c}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://barq_app:BarqLabOnly_7qN2vK8c@postgres:5432/barq_tasks}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
 
   app-02:
     <<: *app
@@ -87,6 +101,11 @@ services:
       INSTANCE_ID: "app-02"
       POSTGRES_HOST: "postgres"
       REDIS_HOST: "redis"
+      POSTGRES_USER: ${POSTGRES_USER:-barq_app}
+      POSTGRES_DB: ${POSTGRES_DB:-barq_tasks}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-BarqLabOnly_7qN2vK8c}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://barq_app:BarqLabOnly_7qN2vK8c@postgres:5432/barq_tasks}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
 
   nginx:
     image: nginx:1.28-alpine@sha256:a8b39bd9cf0f83869a2162827a0caf6137ddf759d50a171451b335cecc87d236

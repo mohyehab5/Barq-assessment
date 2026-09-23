@@ -138,8 +138,8 @@ jobs:
       # ============================================================
       - name: Run Automated Stack Validation
         run: |
-          chmod +x validate.sh
-          ./validate.sh
+          chmod +x scripts/validate.sh
+          ./scripts/validate.sh
 
 
       # ============================================================
@@ -147,8 +147,8 @@ jobs:
       # ============================================================
       - name: Run Failover & HA Recovery Test
         run: |
-          chmod +x failure_test.sh
-          ./failure_test.sh
+          chmod +x scripts/failure_test.sh
+          ./scripts/failure_test.sh
 
 
       # ============================================================
@@ -156,10 +156,10 @@ jobs:
       # ============================================================
       - name: Test Database Backup and Restore
         run: |
-          chmod +x backup.sh restore.sh
+          chmod +x scripts/backup.sh scripts/restore.sh
 
           echo "==> Creating PostgreSQL backup..."
-          ./backup.sh
+          ./scripts/backup.sh
 
           BACKUP_FILE=$(ls -t ./backups/postgres_backup_*.sql 2>/dev/null | head -n 1 || true)
 
@@ -180,7 +180,7 @@ jobs:
           du -h "$BACKUP_FILE"
 
           echo "==> Restoring PostgreSQL backup..."
-          ./restore.sh "$BACKUP_FILE"
+          ./scripts/restore.sh "$BACKUP_FILE"
 
           echo "PASS: PostgreSQL backup and restore completed successfully."
 

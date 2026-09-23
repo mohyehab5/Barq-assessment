@@ -27,22 +27,54 @@ jobs:
 
 
       # ============================================================
-      # 2. CREATE CI ENVIRONMENT FROM SECRETS
+      # 2. VALIDATE IDENTIFIER LENGTHS & CREATE CI ENVIRONMENT
       # ============================================================
-      - name: Create CI Environment
+      - name: Validate Identifier Lengths & Create CI Environment
         env:
-          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
-          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+          SECRET_USER: ${{ secrets.POSTGRES_USER }}
+          SECRET_DB: ${{ secrets.POSTGRES_DB }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           REDIS_URL: ${{ secrets.REDIS_URL }}
           BARQ_TASKS: ${{ secrets.BARQ_TASKS }}
         run: |
+          # Fallback defaults
+          TARGET_USER="${SECRET_USER:-barq_app}"
+          TARGET_DB="${SECRET_DB:-barq_tasks}"
+
+          # Calculate lengths
+          USER_LEN=${#TARGET_USER}
+          DB_LEN=${#TARGET_DB}
+
+          echo "==> PostgreSQL Identifier Length Check:"
+          echo "POSTGRES_USER length: $USER_LEN characters"
+          echo "POSTGRES_DB length:   $DB_LEN characters"
+
+          # Fail explicitly if any identifier reaches 64 characters or more
+          FAIL=0
+          if [ "$USER_LEN" -ge 64 ]; then
+            echo "ERROR: POSTGRES_USER ('$TARGET_USER') is $USER_LEN characters. PostgreSQL requires < 64 chars!"
+            FAIL=1
+          fi
+
+          if [ "$DB_LEN" -ge 64 ]; then
+            echo "ERROR: POSTGRES_DB ('$TARGET_DB') is $DB_LEN characters. PostgreSQL requires < 64 chars!"
+            FAIL=1
+          fi
+
+          if [ "$FAIL" -eq 1 ]; then
+            echo "FAIL: Identifier length check failed. Shorten secret values in GitHub settings."
+            exit 1
+          fi
+
+          echo "PASS: All PostgreSQL identifiers are under 64 characters."
+
+          # Create .env file
           cat << EOF > .env
-          POSTGRES_USER=${POSTGRES_USER:-barq_app}
-          POSTGRES_DB=${POSTGRES_DB:-barq_tasks}
+          POSTGRES_USER=${TARGET_USER}
+          POSTGRES_DB=${TARGET_DB}
           POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-BarqLabOnly_7qN2vK8c}
-          DATABASE_URL=${DATABASE_URL:-postgresql://barq_app:BarqLabOnly_7qN2vK8c@postgres:5432/barq_tasks}
+          DATABASE_URL=${DATABASE_URL:-postgresql://${TARGET_USER}:BarqLabOnly_7qN2vK8c@postgres:5432/${TARGET_DB}}
           REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
           BARQ_TASKS=${BARQ_TASKS:-barq_tasks}
           PUBLIC_PORT=8080
@@ -62,7 +94,7 @@ jobs:
 
 
       # ============================================================
-      # 4. BUILD & START COMPLETE STACK WITH FRESH VOLUMES
+      # 4. BUILD & START COMPLETE STACK WITH CLEAN VOLUMES
       # ============================================================
       - name: Build and Start Stack
         run: |

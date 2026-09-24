@@ -9,11 +9,11 @@ x-app: &app
     APP_PORT: "8080"
     POSTGRES_HOST: "postgres"
     REDIS_HOST: "redis"
-    POSTGRES_USER: ${POSTGRES_USER:-barq_app}
-    POSTGRES_DB: ${POSTGRES_DB:-barq_tasks}
-    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-BarqLabOnly_7qN2vK8c}
-    DATABASE_URL: ${DATABASE_URL:-postgresql://barq_app:BarqLabOnly_7qN2vK8c@postgres:5432/barq_tasks}
-    REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    POSTGRES_USER: ${POSTGRES_USER}
+    POSTGRES_DB: ${POSTGRES_DB}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    DATABASE_URL: ${DATABASE_URL}
+    REDIS_URL: ${REDIS_URL}
   deploy:
     resources:
       limits:
@@ -39,9 +39,9 @@ services:
     restart: unless-stopped
     shm_size: 128mb
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-barq_app}
-      POSTGRES_DB: ${POSTGRES_DB:-barq_tasks}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-BarqLabOnly_7qN2vK8c}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
@@ -51,7 +51,7 @@ services:
           cpus: '0.50'
           memory: 256M
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-barq_app} -d ${POSTGRES_DB:-barq_tasks}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 3s
       timeout: 3s
       retries: 10
@@ -87,11 +87,11 @@ services:
       INSTANCE_ID: "app-01"
       POSTGRES_HOST: "postgres"
       REDIS_HOST: "redis"
-      POSTGRES_USER: ${POSTGRES_USER:-barq_app}
-      POSTGRES_DB: ${POSTGRES_DB:-barq_tasks}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-BarqLabOnly_7qN2vK8c}
-      DATABASE_URL: ${DATABASE_URL:-postgresql://barq_app:BarqLabOnly_7qN2vK8c@postgres:5432/barq_tasks}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}
 
   app-02:
     <<: *app
@@ -102,11 +102,11 @@ services:
       INSTANCE_ID: "app-02"
       POSTGRES_HOST: "postgres"
       REDIS_HOST: "redis"
-      POSTGRES_USER: ${POSTGRES_USER:-barq_app}
-      POSTGRES_DB: ${POSTGRES_DB:-barq_tasks}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-BarqLabOnly_7qN2vK8c}
-      DATABASE_URL: ${DATABASE_URL:-postgresql://barq_app:BarqLabOnly_7qN2vK8c@postgres:5432/barq_tasks}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}
 
   nginx:
     image: nginx:1.28-alpine@sha256:a8b39bd9cf0f83869a2162827a0caf6137ddf759d50a171451b335cecc87d236
@@ -126,6 +126,12 @@ services:
         limits:
           cpus: '0.25'
           memory: 64M
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:80/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 5s      
     networks:
       - lab-frontend
 

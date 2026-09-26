@@ -6,7 +6,7 @@ x-app: &app
   restart: unless-stopped
   environment:
     APP_HOST: "0.0.0.0"
-    APP_PORT: "8080"
+    APP_PORT: "8090"
     POSTGRES_HOST: "postgres"
     REDIS_HOST: "redis"
     POSTGRES_USER: ${POSTGRES_USER}
@@ -92,6 +92,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL}
+    networks:
+      - lab-frontend
+      - lab-backend
 
   app-02:
     <<: *app
@@ -102,14 +105,15 @@ services:
       INSTANCE_ID: "app-02"
       POSTGRES_HOST: "postgres"
       REDIS_HOST: "redis"
-<<<<<<< HEAD
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL}
+    networks:
+      - lab-frontend
+      - lab-backend
 
-=======
   app-03:
     <<: *app
     container_name: app-03
@@ -119,7 +123,15 @@ services:
       INSTANCE_ID: "app-03"
       POSTGRES_HOST: "postgres"
       REDIS_HOST: "redis"
->>>>>>> de3e7f9 (port change and add third party)
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}
+    networks:
+      - lab-frontend
+      - lab-backend
+
   nginx:
     image: nginx:1.28-alpine@sha256:a8b39bd9cf0f83869a2162827a0caf6137ddf759d50a171451b335cecc87d236
     container_name: nginx
@@ -139,17 +151,13 @@ services:
         condition: service_healthy
       app-02:
         condition: service_healthy
+      app-03:
+        condition: service_healthy
     deploy:
       resources:
         limits:
           cpus: '0.25'
           memory: 64M
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:80/health"]
-      interval: 5s
-      timeout: 3s
-      retries: 3
-      start_period: 5s      
     networks:
       - lab-frontend
 

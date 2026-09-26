@@ -6,13 +6,23 @@ MAX_ATTEMPTS=30
 
 echo "==> [1/6] Validating Docker Container Health States..."
 for container in app-01 app-02 app-03 nginx postgres redis; do
-  STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$container" 2>/dev/null || echo "not_running")
-  if [ "$STATUS" = "healthy" ]; then
-    echo "PASS: Container '$container' is running and healthy."
-  else
-    echo "FAIL: Container '$container' health status is '$STATUS' (expected 'healthy')."
-    exit 1
-  fi
+  attempt=0
+  STATUS="not_running"
+  until [ "$STATUS" = "healthy" ]; do
+    STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$container" 2>/dev/null || echo "not_running")
+    if [ "$STATUS" = "healthy" ]; then
+      break
+    fi
+    attempt=$((attempt+1))
+    if [ "$attempt" -ge "$MAX_ATTEMPTS" ]; then
+      echo "FAIL: Container '$container' health status is '$STATUS' (expected 'healthy') after $MAX_ATTEMPTS attempts."
+      docker logs "$container" --tail=50 2>/dev/null || true
+      exit 1
+    fi
+    echo "Waiting for '$container' to become healthy (attempt $attempt/$MAX_ATTEMPTS)... currently '$STATUS'"
+    sleep 2
+  done
+  echo "PASS: Container '$container' is running and healthy."
 done
 
 echo "==> [2/6] Bounded Wait for NGINX & Application Readiness on Port 8090..."

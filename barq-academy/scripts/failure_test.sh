@@ -5,7 +5,7 @@ import urllib.request
 import json
 import sys
 
-NGINX_URL = "http://127.0.0.1:8080"
+NGINX_URL = "http://127.0.0.1:8090"
 
 def log(msg):
     print(f"[+] {msg}")

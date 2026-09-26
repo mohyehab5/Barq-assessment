@@ -1,0 +1,241 @@
+name: Continuous Integration & Service Validation
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+    branches: ["main", "master"]
+  workflow_dispatch:
+
+jobs:
+  validate-stack:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: barq-academy
+
+    steps:
+
+      # ============================================================
+      # 1. CHECKOUT REPOSITORY
+      # ============================================================
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+
+      # ============================================================
+      # 2. CREATE CI ENVIRONMENT WITH DATABASE_URL PREFIX & PORT 8090
+      # ============================================================
+      - name: Create CI Environment
+        env:
+          SECRET_USER: ${{ secrets.POSTGRES_USER }}
+          SECRET_DB: ${{ secrets.POSTGRES_DB }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          RAW_DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          BARQ_TASKS: ${{ secrets.BARQ_TASKS }}
+        run: |
+          # 1. Take raw input (e.g. ://barq_app:BarqLabOnly_7qN2vK8c@postgres:5432/barq_tasks)
+          RAW_URL="${RAW_DATABASE_URL:-://barq_app:BarqLabOnly_7qN2vK8c@postgres:5432/barq_tasks}"
+
+          # 2. Prepend 'postgresql' if missing
+          if [[ "$RAW_URL" == "postgresql"* ]]; then
+            FULL_DATABASE_URL="$RAW_URL"
+          else
+            FULL_DATABASE_URL="postgresql${RAW_URL}"
+          fi
+
+          # 3. Extract pure username ('barq_app') and database name ('barq_tasks')
+          EXTRACTED_USER=$(echo "$FULL_DATABASE_URL" | sed -n 's#.*://\([^:]*\):.*#\1#p')
+          EXTRACTED_DB=$(echo "$FULL_DATABASE_URL" | sed -n 's#.*/\([^?]*\).*#\1#p')
+
+          # 4. Resolve POSTGRES_USER and POSTGRES_DB safely
+          FINAL_USER="${SECRET_USER:-$EXTRACTED_USER}"
+          FINAL_DB="${SECRET_DB:-$EXTRACTED_DB}"
+
+          # If secrets were set to full URLs by mistake, fallback to extracted values
+          [ ${#FINAL_USER} -ge 64 ] && FINAL_USER="$EXTRACTED_USER"
+          [ ${#FINAL_DB} -ge 64 ] && FINAL_DB="$EXTRACTED_DB"
+
+          # Safety default fallbacks
+          [ -z "$FINAL_USER" ] && FINAL_USER="barq_app"
+          [ -z "$FINAL_DB" ] && FINAL_DB="barq_tasks"
+
+          # Print verified values to CI logs
+          echo "=========================================="
+          echo "POSTGRES_USER: '$FINAL_USER' (${#FINAL_USER} chars)"
+          echo "POSTGRES_DB:   '$FINAL_DB' (${#FINAL_DB} chars)"
+          echo "DATABASE_URL:  '$FULL_DATABASE_URL'"
+          echo "PUBLIC_PORT:   '8090'"
+          echo "=========================================="
+
+          # 5. Write clean .env file
+          cat << EOF > .env
+          POSTGRES_USER=${FINAL_USER}
+          POSTGRES_DB=${FINAL_DB}
+          POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-BarqLabOnly_7qN2vK8c}
+          DATABASE_URL=${FULL_DATABASE_URL}
+          REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+          BARQ_TASKS=${BARQ_TASKS:-barq_tasks}
+          PUBLIC_PORT=8090
+          EOF
+
+          echo "CI environment generated successfully."
+
+
+      # ============================================================
+      # 3. DOCKER COMPOSE CONFIGURATION CHECK
+      # ============================================================
+      - name: Docker Compose Syntax Check
+        run: |
+          docker compose config --quiet
+          echo "PASS: Docker Compose syntax is valid."
+
+
+      # ============================================================
+      # 4. BUILD & START STACK WITH HEALTHCHECK
+      # ============================================================
+      - name: Build and Start Stack
+        run: |
+          docker compose down -v --remove-orphans || true
+          docker compose up -d --build
+
+          echo "Waiting for PostgreSQL container to become healthy..."
+          max_attempts=20
+          attempt=0
+          until [ "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' postgres 2>/dev/null)" == "healthy" ]; do
+            attempt=$((attempt+1))
+            if [ $attempt -ge $max_attempts ]; then
+              echo "FAIL: PostgreSQL failed to reach healthy state in time."
+              docker compose logs postgres
+              exit 1
+            fi
+            echo "Waiting for PostgreSQL... (attempt $attempt/$max_attempts)"
+            sleep 3
+          done
+
+          echo "PostgreSQL is healthy!"
+          docker compose ps
+
+
+      # ============================================================
+      # 5. VERIFY APPLICATION CONTAINERS
+      # ============================================================
+      - name: Verify Application Containers
+        run: |
+          echo "==> app-01 status"
+          docker inspect app-01 \
+            --format='Status={{.State.Status}} Health={{if .State.Health}}{{.State.Health.Status}}{{else}}N/A{{end}}'
+
+          echo "==> app-02 status"
+          docker inspect app-02 \
+            --format='Status={{.State.Status}} Health={{if .State.Health}}{{.State.Health.Status}}{{else}}N/A{{end}}'
+
+          echo "==> app-03 status"
+          docker inspect app-03 \
+            --format='Status={{.State.Status}} Health={{if .State.Health}}{{.State.Health.Status}}{{else}}N/A{{end}}'
+
+          echo "==> PostgreSQL status"
+          docker inspect postgres \
+            --format='Status={{.State.Status}} Health={{if .State.Health}}{{.State.Health.Status}}{{else}}N/A{{end}}'
+
+          echo "==> Redis status"
+          docker inspect redis \
+            --format='Status={{.State.Status}} Health={{if .State.Health}}{{.State.Health.Status}}{{else}}N/A{{end}}'
+
+          echo "==> Nginx status"
+          docker inspect nginx \
+            --format='Status={{.State.Status}} Health={{if .State.Health}}{{.State.Health.Status}}{{else}}N/A{{end}}'
+
+
+      # ============================================================
+      # 6. DETECT RUNNING APPLICATION IMAGE
+      # ============================================================
+      - name: Detect Running Application Image
+        run: |
+          APP_IMAGE_ID=$(docker inspect -f '{{.Image}}' app-01)
+          echo "Running app-01 image ID: $APP_IMAGE_ID"
+
+          if [ -z "$APP_IMAGE_ID" ]; then
+            echo "FAIL: Could not determine app-01 image."
+            exit 1
+          fi
+
+          echo "APP_IMAGE_ID=$APP_IMAGE_ID" >> "$GITHUB_ENV"
+
+
+      # ============================================================
+      # 7. RUN AUTOMATED APPLICATION VALIDATION
+      # ============================================================
+      - name: Run Automated Stack Validation
+        run: |
+          chmod +x scripts/validate.sh
+          ./scripts/validate.sh
+
+
+      # ============================================================
+      # 8. FAILOVER & HIGH AVAILABILITY TEST
+      # ============================================================
+      - name: Run Failover & HA Recovery Test
+        run: |
+          chmod +x scripts/failure_test.sh
+          python3 scripts/failure_test.sh
+
+
+      # ============================================================
+      # 9. DATABASE BACKUP & RESTORE TEST
+      # ============================================================
+      - name: Test Database Backup and Restore
+        run: |
+          chmod +x scripts/backup.sh scripts/restore.sh
+
+          echo "==> Creating PostgreSQL backup..."
+          ./scripts/backup.sh
+
+          BACKUP_FILE=$(ls -t ./backups/postgres_backup_*.sql 2>/dev/null | head -n 1 || true)
+
+          if [ -z "$BACKUP_FILE" ] || [ ! -f "$BACKUP_FILE" ]; then
+            echo "FAIL: No PostgreSQL backup file found."
+            exit 1
+          fi
+
+          echo "PASS: Backup created successfully at $BACKUP_FILE"
+
+          echo "==> Restoring PostgreSQL backup..."
+          ./scripts/restore.sh "$BACKUP_FILE"
+
+          echo "PASS: PostgreSQL backup and restore completed successfully."
+
+
+      # ============================================================
+      # 10. TRIVY SECURITY SCAN
+      # ============================================================
+      - name: Security Scan - Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.APP_IMAGE_ID }}
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: '0'
+
+
+      # ============================================================
+      # 11. COLLECT LOGS ON FAILURE
+      # ============================================================
+      - name: Collect Container Logs on Failure
+        if: failure()
+        run: |
+          echo "======================================"
+          echo "POSTGRES LOGS"
+          echo "======================================"
+          docker compose logs --no-color postgres --tail=100 || true
+
+
+      # ============================================================
+      # 12. TEARDOWN ENVIRONMENT
+      # ============================================================
+      - name: Teardown Environment
+        if: always()
+        run: |
+          docker compose down -v --remove-orphans || true
